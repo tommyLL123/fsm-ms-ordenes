@@ -1,0 +1,16 @@
+{
+  "name": "fsm-ms-ordenes",
+  "version": "1.0.0",
+  "description": "Microservicio de Ordenes de Trabajo FSM",
+  "main": "src/handler.js",
+  "scripts": {
+    "deploy": "serverless deploy"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1400.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "serverless": "^3.30.0"
+  }
+}

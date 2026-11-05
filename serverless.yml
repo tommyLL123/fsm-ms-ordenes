@@ -1,0 +1,84 @@
+service: fsm-ms-ordenes
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  environment:
+    ORDENES_TABLE: ordenes-${sls:stage}
+    SNS_TOPIC_ARN: !Ref TopicoEventosFSM
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:Query
+        - dynamodb:BatchWriteItem
+      Resource: !GetAtt TablaOrdenes.Arn
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: !Ref TopicoEventosFSM
+
+functions:
+  crearOrden:
+    handler: src/handler.crear
+    events:
+      - http:
+          path: /ordenes
+          method: post
+          cors: true
+  listarOrdenes:
+    handler: src/handler.listar
+    events:
+      - http:
+          path: /ordenes
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    # 1. Base de Datos del MS-C
+    TablaOrdenes:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ORDENES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: orden_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
+            KeyType: HASH
+          - AttributeName: orden_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    # 2. Topico SNS Compartido (Responsabilidad MS-C)
+    TopicoEventosFSM:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: eventos-fsm-${sls:stage}
+
+    # 3. Colas SQS (Responsabilidad MS-C)
+    ColaVisitas:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: cola-visitas-${sls:stage}
+    ColaFacturacion:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: cola-facturacion-${sls:stage}
+
+    # 4. Suscripciones SNS -> SQS con filtro
+    SuscripcionVisitas:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref TopicoEventosFSM
+        Endpoint: !GetAtt ColaVisitas.Arn
+        Protocol: sqs
+        RawMessageDelivery: true
+        FilterPolicy:
+          evento:
+            - orden.creada
