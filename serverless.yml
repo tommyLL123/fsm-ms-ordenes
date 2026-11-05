@@ -59,17 +59,17 @@ resources:
     TopicoEventosFSM:
       Type: AWS::SNS::Topic
       Properties:
-        TopicName: eventos-fsm-${sls:stage}
+        TopicName: fsm-${sls:stage}-eventos
 
     # 3. Colas SQS (Responsabilidad MS-C)
     ColaVisitas:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: cola-visitas-${sls:stage}
+        QueueName: fsm-${sls:stage}-cola-visitas
     ColaFacturacion:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: cola-facturacion-${sls:stage}
+        QueueName: fsm-${sls:stage}-cola-facturacion
 
     # 4. Suscripciones SNS -> SQS con filtro
     SuscripcionVisitas:
