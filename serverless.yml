@@ -1,35 +1,31 @@
 service: fsm-ms-ordenes
+frameworkVersion: '3'
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: python3.10
+  stage: dev
   region: us-east-1
+  # Uso estricto del LabRole para AWS Academy Learner Lab
+  role: arn:aws:iam::${aws:accountId}:role/LabRole
   environment:
-    ORDENES_TABLE: ordenes-${sls:stage}
+    ORDENES_TABLE: ${self:custom.tableName}
     SNS_TOPIC_ARN: !Ref TopicoEventosFSM
-  iamRoleStatements:
-    - Effect: Allow
-      Action:
-        - dynamodb:PutItem
-        - dynamodb:GetItem
-        - dynamodb:Query
-        - dynamodb:BatchWriteItem
-      Resource: !GetAtt TablaOrdenes.Arn
-    - Effect: Allow
-      Action:
-        - sns:Publish
-      Resource: !Ref TopicoEventosFSM
+    USUARIOS_VALIDAR_LAMBDA: fms-ms-usuarios-dev-validar-token # Ajusta al nombre real de la lambda A
+
+custom:
+  tableName: fsm-ordenes-${self:provider.stage}
 
 functions:
   crearOrden:
-    handler: src/handler.crear
+    handler: handler.crear_orden
     events:
       - http:
           path: /ordenes
           method: post
           cors: true
   listarOrdenes:
-    handler: src/handler.listar
+    handler: handler.listar_ordenes
     events:
       - http:
           path: /ordenes
@@ -38,11 +34,11 @@ functions:
 
 resources:
   Resources:
-    # 1. Base de Datos del MS-C
-    TablaOrdenes:
+    # Tabla DynamoDB
+    OrdenesTable:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: ${self:provider.environment.ORDENES_TABLE}
+        TableName: ${self:custom.tableName}
         AttributeDefinitions:
           - AttributeName: tenant_id
             AttributeType: S
@@ -55,30 +51,69 @@ resources:
             KeyType: RANGE
         BillingMode: PAY_PER_REQUEST
 
-    # 2. Topico SNS Compartido (Responsabilidad MS-C)
+    # Tópico SNS (Responsabilidad de C)
     TopicoEventosFSM:
       Type: AWS::SNS::Topic
       Properties:
-        TopicName: fsm-${sls:stage}-eventos
+        TopicName: fsm-eventos-topic-${self:provider.stage}
 
-    # 3. Colas SQS (Responsabilidad MS-C)
+    # Colas SQS (Visitas y Facturación)
     ColaVisitas:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: fsm-${sls:stage}-cola-visitas
+        QueueName: fsm-cola-visitas-${self:provider.stage}
+
     ColaFacturacion:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: fsm-${sls:stage}-cola-facturacion
+        QueueName: fsm-cola-facturacion-${self:provider.stage}
 
-    # 4. Suscripciones SNS -> SQS con filtro
+    # Suscripciones de SNS a SQS
     SuscripcionVisitas:
       Type: AWS::SNS::Subscription
       Properties:
-        TopicArn: !Ref TopicoEventosFSM
-        Endpoint: !GetAtt ColaVisitas.Arn
         Protocol: sqs
-        RawMessageDelivery: true
+        Endpoint: !GetAtt ColaVisitas.Arn
+        TopicArn: !Ref TopicoEventosFSM
         FilterPolicy:
-          evento:
-            - orden.creada
+          evento: ["orden.creada"]
+
+    SuscripcionFacturacion:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        Endpoint: !GetAtt ColaFacturacion.Arn
+        TopicArn: !Ref TopicoEventosFSM
+        FilterPolicy:
+          evento: ["orden.creada", "visita.completada"] # Facturación requiere estos eventos
+
+    # Permisos vitales para que SNS escriba en las colas
+    ColaVisitasPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref ColaVisitas
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: '*'
+              Action: sqs:SendMessage
+              Resource: !GetAtt ColaVisitas.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref TopicoEventosFSM
+
+    ColaFacturacionPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref ColaFacturacion
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: '*'
+              Action: sqs:SendMessage
+              Resource: !GetAtt ColaFacturacion.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref TopicoEventosFSM
