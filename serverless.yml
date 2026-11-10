@@ -17,31 +17,36 @@ provider:
 
 custom:
   tablaOrdenes: fsm-${sls:stage}-ordenes
-  # ¡Nombres sincronizados exactamente con MS-D y MS-E!
   topicoEventos: fsm-${sls:stage}-eventos
   colaVisitas: fsm-${sls:stage}-cola-visitas
   colaFacturacion: fsm-${sls:stage}-cola-facturacion
-  validadorToken: fsm-${sls:stage}-validar-token 
+  validadorToken: fsm-${sls:stage}-validar-token
 
 functions:
   crearOrden:
-    handler: handler.crear_orden
+    handler: src/handler.crear_orden
     events:
       - http:
           path: ordenes
           method: post
           cors: true
   listarOrdenes:
-    handler: handler.listar_ordenes
+    handler: src/handler.listar_ordenes
     events:
       - http:
           path: ordenes
           method: get
           cors: true
+  obtenerOrden:
+    handler: src/handler.obtener_orden
+    events:
+      - http:
+          path: ordenes/{orden_id}
+          method: get
+          cors: true
 
 resources:
   Resources:
-    # 1. Tabla DynamoDB de Órdenes
     TablaOrdenes:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -58,25 +63,21 @@ resources:
           - AttributeName: orden_id
             KeyType: RANGE
 
-    # 2. Tópico SNS (MS-D también publicará aquí)
     TopicoEventosFSM:
       Type: AWS::SNS::Topic
       Properties:
         TopicName: ${self:custom.topicoEventos}
 
-    # 3. Cola SQS para MS-D (Visitas)
     ColaVisitas:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:custom.colaVisitas}
 
-    # 4. Cola SQS para MS-E (Facturación)
     ColaFacturacion:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:custom.colaFacturacion}
 
-    # 5. Suscripción SNS -> SQS Cola Visitas (Filtra eventos orden.creada)
     SuscripcionVisitas:
       Type: AWS::SNS::Subscription
       Properties:
@@ -86,7 +87,6 @@ resources:
         FilterPolicy:
           evento: ["orden.creada"]
 
-    # 6. Suscripción SNS -> SQS Cola Facturación (Filtra eventos orden.creada y visita.completada)
     SuscripcionFacturacion:
       Type: AWS::SNS::Subscription
       Properties:
@@ -96,7 +96,6 @@ resources:
         FilterPolicy:
           evento: ["orden.creada", "visita.completada"]
 
-    # 7. Permisos para que SNS pueda escribir en Cola Visitas
     ColaVisitasPolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -112,7 +111,6 @@ resources:
                 ArnEquals:
                   aws:SourceArn: !Ref TopicoEventosFSM
 
-    # 8. Permisos para que SNS pueda escribir en Cola Facturación
     ColaFacturacionPolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -131,5 +129,9 @@ resources:
 package:
   patterns:
     - '!tests/**'
+    - '!scripts/**'
+    - '!package.json'
+    - '!package-lock.json'
+    - '!node_modules/**'
     - '!README.md'
     - '!.gitignore'
