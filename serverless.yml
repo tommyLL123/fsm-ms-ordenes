@@ -1,44 +1,52 @@
-service: fsm-ms-ordenes
+service: fsm-ordenes
 frameworkVersion: '3'
 
 provider:
   name: aws
-  runtime: python3.10
-  stage: dev
+  runtime: python3.12
   region: us-east-1
-  # Uso estricto del LabRole para AWS Academy Learner Lab
-  role: arn:aws:iam::${aws:accountId}:role/LabRole
+  stage: ${opt:stage, 'dev'}
+  memorySize: 256
+  timeout: 20
+  iam:
+    role: arn:aws:iam::${aws:accountId}:role/LabRole
   environment:
-    ORDENES_TABLE: ${self:custom.tableName}
+    ORDENES_TABLE: ${self:custom.tablaOrdenes}
     SNS_TOPIC_ARN: !Ref TopicoEventosFSM
-    USUARIOS_VALIDAR_LAMBDA: fms-ms-usuarios-dev-validar-token # Ajusta al nombre real de la lambda A
+    USUARIOS_VALIDAR_LAMBDA: ${self:custom.validadorToken}
 
 custom:
-  tableName: fsm-ordenes-${self:provider.stage}
+  tablaOrdenes: fsm-${sls:stage}-ordenes
+  # ¡Nombres sincronizados exactamente con MS-D y MS-E!
+  topicoEventos: fsm-${sls:stage}-eventos
+  colaVisitas: fsm-${sls:stage}-cola-visitas
+  colaFacturacion: fsm-${sls:stage}-cola-facturacion
+  validadorToken: fsm-${sls:stage}-validar-token 
 
 functions:
   crearOrden:
     handler: handler.crear_orden
     events:
       - http:
-          path: /ordenes
+          path: ordenes
           method: post
           cors: true
   listarOrdenes:
     handler: handler.listar_ordenes
     events:
       - http:
-          path: /ordenes
+          path: ordenes
           method: get
           cors: true
 
 resources:
   Resources:
-    # Tabla DynamoDB
-    OrdenesTable:
+    # 1. Tabla DynamoDB de Órdenes
+    TablaOrdenes:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: ${self:custom.tableName}
+        TableName: ${self:custom.tablaOrdenes}
+        BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
           - AttributeName: tenant_id
             AttributeType: S
@@ -49,26 +57,26 @@ resources:
             KeyType: HASH
           - AttributeName: orden_id
             KeyType: RANGE
-        BillingMode: PAY_PER_REQUEST
 
-    # Tópico SNS (Responsabilidad de C)
+    # 2. Tópico SNS (MS-D también publicará aquí)
     TopicoEventosFSM:
       Type: AWS::SNS::Topic
       Properties:
-        TopicName: fsm-eventos-topic-${self:provider.stage}
+        TopicName: ${self:custom.topicoEventos}
 
-    # Colas SQS (Visitas y Facturación)
+    # 3. Cola SQS para MS-D (Visitas)
     ColaVisitas:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: fsm-cola-visitas-${self:provider.stage}
+        QueueName: ${self:custom.colaVisitas}
 
+    # 4. Cola SQS para MS-E (Facturación)
     ColaFacturacion:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: fsm-cola-facturacion-${self:provider.stage}
+        QueueName: ${self:custom.colaFacturacion}
 
-    # Suscripciones de SNS a SQS
+    # 5. Suscripción SNS -> SQS Cola Visitas (Filtra eventos orden.creada)
     SuscripcionVisitas:
       Type: AWS::SNS::Subscription
       Properties:
@@ -78,6 +86,7 @@ resources:
         FilterPolicy:
           evento: ["orden.creada"]
 
+    # 6. Suscripción SNS -> SQS Cola Facturación (Filtra eventos orden.creada y visita.completada)
     SuscripcionFacturacion:
       Type: AWS::SNS::Subscription
       Properties:
@@ -85,9 +94,9 @@ resources:
         Endpoint: !GetAtt ColaFacturacion.Arn
         TopicArn: !Ref TopicoEventosFSM
         FilterPolicy:
-          evento: ["orden.creada", "visita.completada"] # Facturación requiere estos eventos
+          evento: ["orden.creada", "visita.completada"]
 
-    # Permisos vitales para que SNS escriba en las colas
+    # 7. Permisos para que SNS pueda escribir en Cola Visitas
     ColaVisitasPolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -103,6 +112,7 @@ resources:
                 ArnEquals:
                   aws:SourceArn: !Ref TopicoEventosFSM
 
+    # 8. Permisos para que SNS pueda escribir en Cola Facturación
     ColaFacturacionPolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -117,3 +127,9 @@ resources:
               Condition:
                 ArnEquals:
                   aws:SourceArn: !Ref TopicoEventosFSM
+
+package:
+  patterns:
+    - '!tests/**'
+    - '!README.md'
+    - '!.gitignore'
